@@ -1,4 +1,4 @@
-use std::{env::{self}, path::{absolute, PathBuf}, process::{Command, Stdio}, str::FromStr};
+use std::{env::{self}, path::{absolute, PathBuf}, process::{Command, Stdio}, str::FromStr, thread::sleep, time::Duration};
 
 use crate::FlashCmdDescriptor;
 
@@ -48,12 +48,18 @@ fn objcopy(
         return Err(RunError::PackageNotInstalled);
     }
 
+    
+
     let app_path: PathBuf;
     if app_hex_path.is_some() {
         app_path = app_hex_path.clone().unwrap();
     } else {
         app_path = project_dir.join("flash").join("app.hex");
     }
+
+    let mut build = Command::new("cargo");
+    build.arg("build");
+    build.arg("-release");
 
     let mut objcopy = Command::new("cargo");
     objcopy.arg("objcopy");
@@ -122,7 +128,7 @@ fn upload(
         println!("Fetching uploader path from project directory...");
         let uploader_project_path = project_dir
             .join("flash")
-            .join("mik32_uploader");
+            .join("mik32-uploader");
         if !uploader_project_path.exists() {
             eprintln!("Fetching from project directory failed. Consider cloning uploader to ./flash directory or setting MIK32_UPLOADER_PATH to desired value");
             return Err(RunError::UploadFailed);
@@ -142,9 +148,9 @@ fn upload(
 
     let uploader_final_path = uploader_final_path.unwrap();
     print!("Validating uploader path... ");
-    if !uploader_final_path.join("mik32_uploader.py").exists() {
-        println!("ERROR\n");
-        eprintln!("Could not find mik32_uploader.py in provided path. Make sure to clone mik32_uploader correctly...");
+    if !uploader_final_path.join("mik32_upload.py").exists() {
+        println!("ERROR!!!\n");
+        eprintln!("Could not find mik32-uploader.py in provided path. Make sure to clone mik32_uploader correctly...");
         return Err(RunError::UploadFailed);
     }
     println!("OK\n");
@@ -219,7 +225,7 @@ fn upload(
 
     println!("Uploading...");
     let mut upload_cmd = Command::new("python3");
-    upload_cmd.arg(absolute(uploader_final_path.join("mik32_uploader.py")).unwrap().to_str().unwrap());
+    upload_cmd.arg(absolute(uploader_final_path.join("mik32_upload.py")).unwrap().to_str().unwrap());
     upload_cmd.arg("--run-openocd");
     upload_cmd.arg("--openocd-exec");
     upload_cmd.arg(absolute(openocd_final_path).unwrap().to_str().unwrap());
@@ -274,7 +280,7 @@ fn upload(
         ]);
     }
 
-    println!("Uploading...");
+    println!("Uploading binary...");
 
     let upload_status = upload_cmd.status().expect("Failed to run upload");
     if !upload_status.success() {
@@ -286,15 +292,41 @@ fn upload(
     Ok(())
 }
 
-fn connect_gdb(gdb_exec: Option<String>, app_hex_path: Option<PathBuf>) -> Result<(), RunError>{
+fn connect_gdb(
+    gdb_exec: Option<String>, 
+    gdb_target_path: Option<PathBuf>, 
+    openocd_interface: Option<PathBuf>,
+    openocd_scripts: Option<PathBuf>,
+    openocd_target: Option<PathBuf>,
+    
+) -> Result<(), RunError>{
     if gdb_exec.is_none() {
         eprintln!("gdb executable was not provided. Skipping this step.");
         return Err(RunError::NoGdbExec);
     }
+    let t_path= gdb_target_path.unwrap();
+    let o_int_path = openocd_interface.unwrap();
+    let o_scr_path = openocd_scripts.unwrap();
+    let o_tar_path = openocd_target.unwrap();
+
+    let mut openocd = Command::new("openocd");
+    openocd.arg("-f").arg(o_scr_path.join(o_int_path));
+    openocd.arg("-f").arg(o_scr_path.join(o_tar_path));
+
+    let _ = openocd.stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("Failed to run openocd to connect GDB");
+
+    sleep(Duration::from_millis(500));
 
     println!("Performing attach to GDB executable provided...");
     let mut gdb_cmd = Command::new(gdb_exec.unwrap());
-    gdb_cmd.arg(absolute(app_hex_path.unwrap()).unwrap().to_str().unwrap());
+    gdb_cmd.arg(
+        absolute(
+            t_path
+        ).unwrap()
+    );
     gdb_cmd.arg("-x");
     gdb_cmd.arg("-");
 
@@ -307,9 +339,9 @@ fn connect_gdb(gdb_exec: Option<String>, app_hex_path: Option<PathBuf>) -> Resul
     match child {
         Ok(mut child) => {
             use std::io::Write;
-            child.stdin.as_mut().unwrap()
-                .write_all(
-                    r#"EOF
+            let mut stdin = child.stdin.take().unwrap();
+            stdin.write_all(
+                    r#"
                 set mem inaccessible-by-default off
                 mem 0x01000000 0x01002000 ro
                 mem 0x80000000 0xffffffff ro
@@ -318,9 +350,8 @@ fn connect_gdb(gdb_exec: Option<String>, app_hex_path: Option<PathBuf>) -> Resul
                 set remote hardware-breakpoint-limit 2
                 target remote localhost:3333
                 load
-                EOF
                 "#.as_bytes()).unwrap();
-            let _ = child.wait().unwrap();
+            stdin.
             Ok(())
         }
         Err(e) => {
@@ -355,11 +386,17 @@ pub fn run_wrapper(mut desc: FlashCmdDescriptor) -> Result<(), RunError>{
         desc.openocd_host,
         desc.openocd_port,
         desc.adapter_speed,
-        desc.openocd_scripts,
-        desc.openocd_interface,
-        desc.openocd_target,
+        desc.openocd_scripts.clone(),
+        desc.openocd_interface.clone(),
+        desc.openocd_target.clone(),
         &desc.project_dir
     )?;
-    connect_gdb(desc.gdb_exec, desc.app_hex_path)?;
+    connect_gdb(
+        desc.gdb_exec, 
+        desc.gdb_target_path, 
+        desc.openocd_interface,
+        desc.openocd_scripts,
+        desc.openocd_target,
+    )?;
     Ok(())
 }

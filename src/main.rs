@@ -29,6 +29,8 @@ enum Commands {
         reuse: bool,
         #[arg(short, long, help="Pass a gdb executable. If provided will try to connect to a board with internal gdb script.")]
         gdb_exec: Option<String>,
+        #[arg(long)]
+        gdb_target_path: Option<PathBuf>,
         #[arg(short, long, help="Pass an openocd path. Otherwise will seek in MIK32_OPENOCD_PATH environment variable and then using 'which openocd' command.")]
         openocd_path: Option<PathBuf>,
         #[arg(short, long, help="Pass a uploader path manually. Otherwise will seek in MIK32_UPLOADER_PATH environment variable and then in project directory.")]
@@ -77,6 +79,7 @@ struct FlashCmdDescriptor {
     example: Option<String>,
     reuse: bool,
     gdb_exec: Option<String>,
+    gdb_target_path: Option<PathBuf>,
     openocd_path: Option<PathBuf>,
     uploader_path: Option<PathBuf>,
     app_hex_path: Option<PathBuf>,
@@ -105,6 +108,7 @@ fn main() {
             example, 
             reuse,
             gdb_exec, 
+            gdb_target_path,
             openocd_path, 
             uploader_path, 
             app_hex_path, 
@@ -121,6 +125,7 @@ fn main() {
                     example,
                     reuse, 
                     gdb_exec, 
+                    gdb_target_path,
                     openocd_path,
                     uploader_path, 
                     app_hex_path, 
